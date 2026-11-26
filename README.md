@@ -1,57 +1,61 @@
-# 📸 Photos
+# 📸 Photos - Liquid Glass Gallery
 
 A premium, private, and ultra-smooth offline Android gallery app featuring a genuine Liquid Glass design system.
 
-Developed by **Aman**.
+Developed with ❤️ by **Aman** ([@codebyaman7](https://github.com/codebyaman7))
 
 ---
 
-## ✨ Highlights
+## ✨ Features & Highlights
 
-* **Liquid Glass Design System:** High-end frosted glass aesthetic with subtle specular highlights, adaptive dynamic color theming, and real-time backdrop blur.
-* **Ultra-Smooth 120Hz Performance:** Off-main-thread image decoding and zero-allocation thumbnail pipeline engineered for stutter-free scrolling across thousands of photos.
-* **100% On-Device & Private:** Works completely offline. No tracking, no cloud telemetry, and zero data leaves your phone.
-* **Smart Organization:** Timeline view categorized dynamically by Day, Month, and Year with custom pinch-to-zoom grid density.
-* **Full-Screen Viewer:** Immersive photo viewer with smooth pinch-to-zoom, pan gestures, and detailed EXIF metadata inspector.
-* **Smart Albums:** Automatic categorization for Camera, Screenshots, Downloads, Videos, and custom albums.
-* **Safe Deletion & Favorites:** Integrated Trash with auto-recycle safeguards and one-tap Favorites.
-* **Biometric Secure Folder:** Hardware-backed biometric lock for sensitive photos and media.
+* 🫧 **Genuine Liquid Glass UI:** Frosted glass aesthetic with real-time backdrop blur, specular rim highlights, and dynamic adaptive theming.
+* ⚡ **Ultra-Smooth 120Hz Performance:** Off-main-thread image decoding and zero-allocation thumbnail caching pipeline engineered for buttery smooth scrolling across thousands of photos without frame drops.
+* 🔒 **100% On-Device Privacy:** Fully offline. Zero trackers, zero cloud telemetry, and zero analytics. Your media never leaves your device.
+* 📅 **Smart Organization:** Timeline categorized seamlessly by Day, Month, and Year with interactive pinch-to-zoom grid scaling.
+* 🔍 **Immersive Full-Screen Viewer:** Deep pinch-to-zoom, fluid swipe-to-dismiss gesture, video playback, and rich EXIF metadata viewer.
+* 📁 **Smart Albums:** Automatic auto-detection for Camera, Screenshots, Downloads, Videos, and custom folders.
+* 🗑️ **Safe Deletion & Favorites:** Integrated Trash with 30-day auto-empty alongside a Favorites feature.
+* 🔐 **Biometric Secure Folder:** Hardware-backed biometric lock (fingerprint / face / device credential) to secure private photos locally.
 
 ---
 
 ## 🔒 Privacy Guarantee
 
 Photos is built with an absolute privacy-first mindset:
-* All media reading, caching, and editing happen **100% locally** on your device.
-* Zero cloud uploads, zero account logins, and zero advertising SDKs.
-* Biometric credentials never leave Android's secure enclave (Keystore / Keymaster).
+* All media scanning, thumbnail generation, and photo operations run **100% locally** on your device.
+* No account login, no ads, and no external cloud servers.
+* Biometrics are processed strictly via Android's secure hardware enclave (`BiometricPrompt`).
 
 ---
 
 ## 🛠 Tech Stack
 
-* **Language & Architecture:** 100% Kotlin, Single-Activity MVVM Architecture
+* **Language:** 100% Kotlin
 * **UI Toolkit:** Jetpack Compose + Material 3 + Custom Liquid Glass Shaders
-* **Image & Video Pipeline:** Coil, Telephoto (deep pinch-to-zoom), Media3 / ExoPlayer
-* **Database & Persistence:** Room Database, DataStore Preferences
-* **Security:** AndroidX BiometricPrompt API
+* **Image Pipeline:** Coil, Telephoto (deep zoomable image engine)
+* **Media Playback:** Media3 / ExoPlayer
+* **Database & Cache:** Room Database, DataStore Preferences, Native NIO Mapped Memory Cache
+* **Security:** AndroidX Biometric API
 
 ---
 
 ## 📱 Requirements
 
-* **OS Version:** Android 12 (API level 31) or higher
+* **Android Version:** Android 12 (API 31) or higher
 * **Architecture:** Optimized for `arm64-v8a`
 
 ---
 
-## 📥 Getting Started
+## 📥 Download Release APK
 
-1. Grab the latest APK release from the [Releases](releases) tab.
-2. Install the APK on your Android device (ensure "Install from unknown sources" is allowed).
-3. Open **Photos** and enjoy a smooth, private gallery experience.
+Download the latest optimized release APK directly from the **[Releases](https://github.com/codebyaman7/Photos/releases)** tab.
+
+1. Download `Photos-arm64-v8a.apk`.
+2. Enable "Install from unknown sources" if prompted.
+3. Open **Photos** and enjoy a private, butter-smooth gallery!
 
 ---
 
-### 👨‍💻 Developer
-Developed with ❤️ by **Aman**
+### 👨‍💻 Author
+**Aman**  
+GitHub: [@codebyaman7](https://github.com/codebyaman7)
