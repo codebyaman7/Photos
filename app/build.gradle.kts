@@ -1,0 +1,112 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
+}
+
+val isBundleTask = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+
+android {
+    namespace = "com.gorilla.gallery"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.gorilla.gallery"
+        minSdk = 31
+        targetSdk = 35
+        versionCode = 22
+        versionName = "1.22"
+
+        vectorDrawables { useSupportLibrary = true }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
+            applicationIdSuffix = ".debug"
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = !isBundleTask
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+dependencies {
+    implementation(libs.telephoto.zoomable)
+    implementation(libs.telephoto.zoomable.image.coil)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.activity.compose)
+
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.foundation)
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.animation)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
+    debugImplementation(libs.androidx.ui.tooling)
+
+    implementation(libs.androidx.navigation.compose)
+
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.transformer)
+    implementation(libs.androidx.media3.effect)
+
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.work.runtime.ktx)
+
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.palette.ktx)
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.exifinterface)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.video)
+    implementation(libs.coil.svg)
+    implementation("com.caverock:androidsvg-aar:1.4")
+    implementation(libs.glide.compose)
+    implementation(libs.accompanist.permissions)
+    implementation(libs.kyant.backdrop)
+    implementation(libs.material.kolor)
+}

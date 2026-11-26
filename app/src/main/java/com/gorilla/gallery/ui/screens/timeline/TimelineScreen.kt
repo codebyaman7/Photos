@@ -1,0 +1,517 @@
+package com.gorilla.gallery.ui.screens.timeline
+
+import androidx.compose.runtime.setValue
+
+import androidx.compose.runtime.getValue
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.res.vectorResource
+import com.gorilla.gallery.ui.components.GlassAlertDialog
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import com.kyant.backdrop.backdrops.layerBackdrop
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.gorilla.gallery.data.model.MediaItem
+import com.gorilla.gallery.ui.AppViewModel
+import com.gorilla.gallery.ui.components.EmptyState
+import com.gorilla.gallery.ui.components.MediaGrid
+import com.gorilla.gallery.ui.components.SelectionActionBar
+import com.gorilla.gallery.ui.components.shareItems
+import com.gorilla.gallery.ui.theme.SpringSpecs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.gorilla.gallery.ui.theme.DesignTokens
+import com.gorilla.gallery.ui.theme.pressScale
+
+@Composable
+fun TimelineScreen(
+    app: AppViewModel,
+    contentPadding: PaddingValues,
+    viewerOpen: Boolean,
+    onOpenViewer: (List<MediaItem>, android.net.Uri, Rect?) -> Unit,
+    vm: TimelineViewModel = viewModel(factory = TimelineViewModel.Factory),
+) {
+    val uiState by vm.uiState.collectAsStateWithLifecycle()
+    val settings by app.settings.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val galleryApp = context.applicationContext as com.gorilla.gallery.GalleryApp
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+
+    // Sections only exist in the Content state; everything below treats "no content" uniformly.
+    val sections = (uiState as? TimelineUiState.Content)?.sections ?: emptyList()
+    val flat = remember(sections) { sections.flatMap { it.items } }
+    
+    val itemAtGridIndex = remember(sections) {
+        buildMap<Int, com.gorilla.gallery.data.model.MediaItem> {
+            var lazyIndex = 1 // top title item
+            sections.forEach { section ->
+                val firstItem = section.items.firstOrNull()
+                if (section.label.isNotEmpty()) {
+                    if (firstItem != null) put(lazyIndex, firstItem)
+                    lazyIndex += 1
+                }
+                section.items.forEach { item ->
+                    put(lazyIndex, item)
+                    lazyIndex += 1
+                }
+            }
+        }
+    }
+
+    val gridIndexByMediaId = remember(sections) {
+        buildMap {
+            var lazyIndex = 1 // top title item
+            sections.forEach { section ->
+                if (section.label.isNotEmpty()) lazyIndex += 1
+                section.items.forEach { item ->
+                    put(item.id, lazyIndex)
+                    lazyIndex += 1
+                }
+            }
+        }
+    }
+    var isSelecting by remember { mutableStateOf(false) }
+    val skipConfirm = com.gorilla.gallery.ui.theme.LocalAppSettings.current.skipConfirmationsAndToasts
+    var showDeleteConfirm by remember { mutableStateOf<List<com.gorilla.gallery.data.model.MediaItem>?>(null) }
+    var showSecureConfirm by remember { mutableStateOf<List<com.gorilla.gallery.data.model.MediaItem>?>(null) }
+    var selected by remember { mutableStateOf(setOf<Long>()) }
+    val selectionMode = isSelecting || selected.isNotEmpty()
+    fun clear() { 
+        selected = emptySet() 
+        isSelecting = false 
+    }
+    val selectedItems = remember(selected, flat) { flat.filter { it.id in selected } }
+    BackHandler(enabled = selectionMode) { clear() }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(),
+        onResult = { uris ->
+            app.importPhotos(uris)
+        }
+    )
+
+    var showSortDialog by remember { mutableStateOf(false) }
+
+    val sortAscending by vm.sortAscending.collectAsStateWithLifecycle()
+    val sortMode by vm.sortMode.collectAsStateWithLifecycle()
+    var gridState by remember { mutableStateOf(androidx.compose.foundation.lazy.grid.LazyGridState()) }
+
+    val windowBounds = remember(density, configuration.screenWidthDp, configuration.screenHeightDp) {
+        with(density) {
+            Rect(
+                left = 0f,
+                top = 0f,
+                right = configuration.screenWidthDp.dp.toPx(),
+                bottom = configuration.screenHeightDp.dp.toPx(),
+            )
+        }
+    }
+    val thumbnailSizePx = remember(settings.gridColumns, density, configuration.screenWidthDp, configuration.screenHeightDp, settings.highQualityThumbnails) {
+        with(density) {
+            val minDimensionDp = minOf(configuration.screenWidthDp, configuration.screenHeightDp)
+            val screenWidthPx = minDimensionDp.dp.roundToPx()
+            val spacingPx = (1.5.dp * 2).roundToPx()
+            val sizePx = ((screenWidthPx / settings.gridColumns) - spacingPx).coerceAtLeast(1)
+            if (settings.highQualityThumbnails) sizePx * 2 else sizePx
+        }
+    }
+
+    // Tab-row visibility is position-driven (scroll past the top → tabs, return to top → bottom
+    // nav). The Photos pill sets forceShowBottomNav, which short-circuits the position check so the
+    // bottom nav appears instantly even mid-fling — no waiting for scroll momentum to settle. It
+    val focusedItem by app.focusedItem.collectAsStateWithLifecycle()
+    var lastSyncedViewerItemId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(viewerOpen, focusedItem, gridIndexByMediaId) {
+        if (!viewerOpen) {
+            lastSyncedViewerItemId = null
+            return@LaunchedEffect
+        }
+        val item = focusedItem ?: return@LaunchedEffect
+        val previousItemId = lastSyncedViewerItemId
+        lastSyncedViewerItemId = item.id
+        if (previousItemId == null) return@LaunchedEffect
+        val index = gridIndexByMediaId[item.id] ?: return@LaunchedEffect
+        
+        // Use the new index to check visibility instead of relying on stale layoutInfo keys
+        val firstVisible = gridState.firstVisibleItemIndex
+        val visibleCount = gridState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
+        val lastVisible = firstVisible + visibleCount
+        val isVisible = index in firstVisible..lastVisible
+        
+        if (!isVisible) {
+            gridState.scrollToItem(index.coerceAtLeast(0))
+        }
+    }
+    val resetToTop by app.resetToTop.collectAsStateWithLifecycle()
+    LaunchedEffect(resetToTop) {
+        if (resetToTop) {
+            gridState.animateScrollToItem(0)
+            app.setResetToTop(false)
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(com.gorilla.gallery.ui.theme.DesignTokens.BgBase)
+    ) {
+        if (uiState is TimelineUiState.Loading) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+            )
+        } else if (uiState is TimelineUiState.Empty) {
+            Column(Modifier.fillMaxSize()) {
+                PhotosMasthead(
+                    itemCount = 0,
+                    selectionMode = selectionMode,
+                    onSelectToggle = {
+                        if (selectionMode) {
+                            clear()
+                        } else {
+                            isSelecting = true
+                        }
+                    },
+                    onSortClick = { showSortDialog = true },
+                    onImportClick = {
+                        importLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                    }
+                )
+                EmptyState(
+                    title = "No photos yet",
+                    subtitle = "Photos and videos on your device will appear here.",
+                    icon = Icons.Rounded.PhotoLibrary,
+                )
+            }
+        } else {
+            AnimatedVisibility(
+                visible = uiState is TimelineUiState.Content,
+                enter = fadeIn(animationSpec = com.gorilla.gallery.ui.theme.SpringSpecs.Standard)
+            ) {
+                var headerHeight by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+                val density = LocalDensity.current
+                val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                val headerHeightDp: androidx.compose.ui.unit.Dp = if (headerHeight > 0) with(density) { headerHeight.toDp() } else (statusBarTopDp + 68.dp)
+                
+                Box(Modifier.fillMaxSize().background(com.gorilla.gallery.ui.theme.DesignTokens.BgBase)) {
+                    com.gorilla.gallery.ui.components.SortTransition(
+                        sortState = Triple(sortMode, sortAscending, sections),
+                        contentKey = { it.first to it.second }
+                    ) { state ->
+                        val gridPadding = PaddingValues(
+                            top = headerHeightDp,
+                            bottom = contentPadding.calculateBottomPadding() + 60.dp
+                        )
+
+                            MediaGrid(
+                            sections = state.third,
+                            columns = settings.gridColumns,
+                            selectionMode = selectionMode,
+                            selectedIds = selected,
+                            onColumnsChange = { vm.setColumns(it) },
+                            onClick = { item, bounds ->
+                                if (selectionMode) {
+                                    selected = if (item.id in selected) selected - item.id else selected + item.id
+                                } else {
+                                    onOpenViewer(flat, item.uri, bounds)
+                                }
+                            },
+                            onLongClick = { item -> selected = selected + item.id },
+                            dragSelectionEnabled = true,
+                            onDragSelectionChange = { selected = it },
+                            contentPadding = gridPadding,
+                            state = androidx.compose.foundation.lazy.grid.rememberLazyGridState().also { state ->
+                                androidx.compose.runtime.SideEffect {
+                                    gridState = state
+                                }
+                            },
+                            headerContent = null,
+                            viewerOpen = viewerOpen,
+                            focusedItem = focusedItem,
+                            highQualityThumbnails = settings.highQualityThumbnails,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(com.gorilla.gallery.ui.theme.DesignTokens.BgBase)
+                            .onSizeChanged { headerHeight = it.height }
+                    ) {
+                        PhotosMasthead(
+                            itemCount = flat.size,
+                            selectionMode = selectionMode,
+                            onSelectToggle = {
+                                if (selectionMode) {
+                                    clear()
+                                } else {
+                                    isSelecting = true
+                                }
+                            },
+                            onSortClick = { showSortDialog = true },
+                            onImportClick = {
+                                importLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+
+
+        AnimatedVisibility(
+            visible = selectionMode,
+            enter = slideInVertically(SpringSpecs.OffsetSpring) { it } + fadeIn(SpringSpecs.Standard),
+            exit = slideOutVertically(SpringSpecs.OffsetSpring) { it } + fadeOut(SpringSpecs.Standard),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 82.dp),
+        ) {
+            SelectionActionBar(
+                count = selected.size,
+                allSelected = flat.isNotEmpty() && selected.size == flat.size,
+                onSelectAll = {
+                    if (selected.size == flat.size) {
+                        clear()
+                    } else {
+                        selected = flat.map { it.id }.toSet()
+                    }
+                },
+                onFavorite = { selectedItems.forEach { app.toggleFavorite(it) }; clear() },
+                onShare = { shareItems(context, selectedItems) },
+                onSecure = { if (skipConfirm) { app.moveToSecure(selectedItems); clear() } else { showSecureConfirm = selectedItems } },
+                onDelete = { if (skipConfirm) { app.moveToTrash(selectedItems); clear() } else { showDeleteConfirm = selectedItems } },
+                backdrop = null,
+            )
+        }
+
+        showDeleteConfirm?.let { itemsToDelete ->
+            val moveToTrash = com.gorilla.gallery.ui.theme.LocalAppSettings.current.moveToTrashByDefaultForDelete
+            GlassAlertDialog(
+                onDismissRequest = { showDeleteConfirm = null },
+                title = "Delete ${itemsToDelete.size} item${if (itemsToDelete.size > 1) "s" else "" }?",
+                text = if (moveToTrash) "Move to Trash?" else "Permanently delete?",
+                confirmLabel = "Delete",
+                onConfirm = {
+                    showDeleteConfirm = null
+                    app.moveToTrash(itemsToDelete)
+                    clear()
+                },
+                dismissLabel = "Cancel",
+                onDismiss = { showDeleteConfirm = null }
+            )
+        }
+
+        showSecureConfirm?.let { itemsToSecure ->
+            GlassAlertDialog(
+                onDismissRequest = { showSecureConfirm = null },
+                title = "Move to Secure Folder?",
+                text = "Move ${itemsToSecure.size} item${if (itemsToSecure.size > 1) "s" else ""}?",
+                confirmLabel = "Move",
+                onConfirm = {
+                    showSecureConfirm = null
+                    app.moveToSecure(itemsToSecure)
+                    clear()
+                },
+                dismissLabel = "Cancel",
+                onDismiss = { showSecureConfirm = null }
+            )
+        }
+
+        if (showSortDialog) {
+            com.gorilla.gallery.ui.components.SortAndOrderDialog(
+                sortMode = sortMode,
+                sortAscending = sortAscending,
+                onDismissRequest = { showSortDialog = false },
+                onSortModeChange = { vm.setSortMode(it) },
+                onSortAscendingChange = { vm.setSortAscending(it) },
+                backdrop = null
+            )
+        }
+    }
+}
+
+@Composable
+fun PhotosMasthead(
+    itemCount: Int,
+    selectionMode: Boolean,
+    onSelectToggle: () -> Unit,
+    onSortClick: () -> Unit,
+    onImportClick: () -> Unit,
+) {
+    val accent = com.gorilla.gallery.ui.theme.LocalDynamicColors.current.accent
+    val appColors = com.gorilla.gallery.ui.theme.LocalAppColors.current
+    
+    val importIcon = remember {
+        ImageVector.Builder(
+            name = "Import",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                fill = null,
+                stroke = androidx.compose.ui.graphics.SolidColor(Color.White),
+                strokeLineWidth = 2.2f,
+                strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round
+            ) {
+                moveTo(21f, 15f); lineTo(21f, 19f)
+                arcTo(2f, 2f, 0f, false, true, 19f, 21f); lineTo(5f, 21f)
+                arcTo(2f, 2f, 0f, false, true, 3f, 19f); lineTo(3f, 15f)
+                moveTo(17f, 8f); lineTo(12f, 3f); lineTo(7f, 8f)
+                moveTo(12f, 3f); lineTo(12f, 15f)
+            }
+        }.build()
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        androidx.compose.material3.Text(
+            text = "Photos",
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Bold,
+            color = appColors.textPrimary,
+            modifier = Modifier.weight(1f)
+        )
+        
+        // Right Tools Capsule
+        Row(
+            modifier = Modifier
+                .padding(bottom = 4.dp)
+                .background(appColors.bgSurface.copy(alpha = 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(25.dp))
+                .border(1.dp, appColors.borderGlass, androidx.compose.foundation.shape.RoundedCornerShape(25.dp))
+                .padding(2.5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            // Sort Icon
+            Box(
+                modifier = Modifier
+                    .pressScale(0.94f)
+                    .size(32.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 6.dp, bottomEnd = 6.dp))
+                    .background(appColors.textPrimary.copy(alpha = 0.08f))
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        onClick = onSortClick
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.ui.graphics.vector.ImageVector.vectorResource(id = com.gorilla.gallery.R.drawable.ic_sort_custom),
+                    contentDescription = "Sort Options",
+                    tint = appColors.textPrimary.copy(alpha = 0.85f),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            
+            // Import Button
+            Row(
+                modifier = Modifier
+                    .pressScale(0.94f)
+                    .height(32.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 16.dp, bottomEnd = 16.dp))
+                    .background(accent.copy(alpha = 0.15f))
+                    .border(1.dp, accent.copy(alpha = 0.32f), androidx.compose.foundation.shape.RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 16.dp, bottomEnd = 16.dp))
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        onClick = onImportClick
+                    )
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = importIcon,
+                    contentDescription = "Import",
+                    tint = accent,
+                    modifier = Modifier.size(13.dp)
+                )
+                androidx.compose.material3.Text(
+                    text = "Import",
+                    color = accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.01.sp
+                )
+            }
+        }
+    }
+}

@@ -1,0 +1,572 @@
+package com.gorilla.gallery.ui.screens.viewer
+
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.LensBlur
+import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.basicMarquee
+import com.gorilla.gallery.ui.theme.LocalDynamicColors
+
+import androidx.compose.runtime.getValue
+
+import android.content.Intent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
+import com.gorilla.gallery.data.model.MediaItem
+import com.gorilla.gallery.data.model.PhotoExif
+import com.gorilla.gallery.ui.AppViewModel
+import com.gorilla.gallery.ui.components.LightweightGlassPanel
+import com.gorilla.gallery.ui.components.ModalSheetScaffold
+import com.gorilla.gallery.ui.components.formatFileSize
+import com.gorilla.gallery.ui.components.formatResolution
+import com.gorilla.gallery.ui.components.megapixels
+import com.gorilla.gallery.ui.theme.LocalAppColors
+import com.gorilla.gallery.ui.theme.DesignTokens
+import com.gorilla.gallery.ui.theme.pressScale
+import androidx.compose.ui.Alignment
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.lifecycle.viewModelScope
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+private val dateFmt = DateTimeFormatter.ofPattern("MMM d, yyyy · h:mm a", Locale.getDefault())
+
+
+
+@Composable
+fun PhotoInfoSheet(app: AppViewModel, item: MediaItem, onDismiss: () -> Unit, onEditMetadata: () -> Unit) {
+    val context = LocalContext.current
+    var exifLoaded by remember(item.id) { mutableStateOf(false) }
+    val exif by produceState(initialValue = PhotoExif(), key1 = item) {
+        value = app.container.photoEditorRepository.readExif(item)
+        exifLoaded = true
+    }
+
+    val svgDimensions by produceState<Pair<Int, Int>?>(null, item.id) {
+        if (item.format == "SVG" && (item.width == 0 || item.height == 0)) {
+            value = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(item.uri)?.use { s ->
+                        val svg = com.caverock.androidsvg.SVG.getFromInputStream(s)
+                        val docW = svg.documentWidth
+                        val docH = svg.documentHeight
+                        val vb = svg.documentViewBox
+                        val w = if (docW > 0) docW.toInt() else vb?.width()?.toInt() ?: 0
+                        val h = if (docH > 0) docH.toInt() else vb?.height()?.toInt() ?: 0
+                        if (w > 0 && h > 0) Pair(w, h) else null
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+    val actualWidth = svgDimensions?.first ?: item.width
+    val actualHeight = svgDimensions?.second ?: item.height
+
+    if (!exifLoaded) return
+
+    val dateZdt = Instant.ofEpochMilli(item.dateTakenMs).atZone(ZoneId.systemDefault())
+    val dateStr = dateZdt.format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault()))
+    val timeStr = dateZdt.format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+
+    ModalSheetScaffold(
+        onDismiss = onDismiss,
+        skipPartiallyExpanded = true,
+        enableLens = false,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            val textColorPrimary = LocalAppColors.current.textPrimary
+            val textColorSecondary = LocalAppColors.current.textSecondary
+            val accentColor = LocalDynamicColors.current.accent
+
+            // 1. File Identity Header
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        text = item.displayName,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = textColorPrimary,
+                        maxLines = 1,
+                        modifier = Modifier.basicMarquee(),
+                        letterSpacing = (-0.1).sp
+                    )
+                    
+                    val labels by produceState(emptyList<String>(), item.id) {
+                        value = app.container.imageLabelRepository.getTags(item.uri.toString())
+                    }
+                    val consolidated = consolidateLabels(labels)
+                    val subjectLabel = if (consolidated.isNotEmpty()) consolidated.first() else ""
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 3.dp)
+                    ) {
+                        Text(dateStr, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = textColorSecondary.copy(alpha = 0.7f))
+                        Box(Modifier.size(3.dp).clip(androidx.compose.foundation.shape.CircleShape).background(textColorSecondary.copy(alpha = 0.4f)))
+                        Text(timeStr, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = textColorSecondary.copy(alpha = 0.7f))
+                        if (subjectLabel.isNotEmpty()) {
+                            Box(Modifier.size(3.dp).clip(androidx.compose.foundation.shape.CircleShape).background(textColorSecondary.copy(alpha = 0.4f)))
+                            Text(subjectLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = textColorSecondary.copy(alpha = 0.7f))
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .background(accentColor.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                        .border(1.dp, accentColor.copy(alpha = 0.32f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 9.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = item.format.uppercase(),
+                        color = accentColor,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.4.sp
+                    )
+                }
+            }
+
+            // 2. Interactive Location Card
+            if (exif.locationName != null) {
+                val locInteractionSource = remember { MutableInteractionSource() }
+                LightweightGlassPanel(
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressScale(interactionSource = locInteractionSource, pressedScale = 0.94f)
+                        .clickable(interactionSource = locInteractionSource, indication = null) {
+                            val uri = "geo:${exif.latitude},${exif.longitude}?q=${exif.latitude},${exif.longitude}".toUri()
+                            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(accentColor.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                    .border(1.dp, accentColor.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Place, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = exif.locationName!!,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColorPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Geotagged",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = textColorSecondary.copy(alpha = 0.7f),
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .background(accentColor.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+                                .border(1.dp, accentColor.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text("Maps", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Icon(Icons.AutoMirrored.Rounded.ArrowForwardIos, contentDescription = null, tint = accentColor, modifier = Modifier.size(11.dp))
+                        }
+                    }
+                }
+            }
+
+            // 3. Big Container Card: Image Profile
+            LightweightGlassPanel(
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val profileTitle = if (item.isVideo) "VIDEO PROFILE" else "IMAGE PROFILE"
+                        val profileBadge = if (item.format == "SVG") "Vector" else (exif.profileBadge ?: if (item.isVideo) "SDR" else "sRGB")
+                        Text(profileTitle, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = textColorSecondary.copy(alpha = 0.7f), letterSpacing = 0.8.sp)
+                        Box(
+                            modifier = Modifier
+                                .background((if (com.gorilla.gallery.ui.theme.LocalAppColors.current.isDark) Color.White else Color.Black).copy(alpha = 0.04f), RoundedCornerShape(8.dp))
+                                .border(1.dp, if (com.gorilla.gallery.ui.theme.LocalAppColors.current.isDark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = profileBadge,
+                                color = textColorSecondary.copy(alpha = 0.9f),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.3.sp
+                            )
+                        }
+                    }
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val dimensionsText = if (actualWidth > 0 && actualHeight > 0) "$actualWidth × $actualHeight" else "Scalable"
+                        val megapixelsText = if (actualWidth > 0 && actualHeight > 0) megapixels(actualWidth, actualHeight) else "Vector"
+                        InnerMetricCard(tag = "Dimensions", value = dimensionsText, modifier = Modifier.weight(1.25f))
+                        InnerMetricCard(tag = "Megapixels", value = megapixelsText, modifier = Modifier.weight(1f))
+                        InnerMetricCard(tag = "File Size", value = formatFileSize(item.sizeBytes), modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+
+            // 4. Big Container Card: Camera Optics
+            if (exif.cameraModel != null || exif.aperture != null || exif.shutter != null || exif.iso != null || exif.focalLength != null) {
+                LightweightGlassPanel(
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("CAMERA OPTICS", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = textColorSecondary.copy(alpha = 0.7f), letterSpacing = 0.8.sp)
+                            if (exif.cameraModel != null) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(Icons.Rounded.Smartphone, contentDescription = null, tint = accentColor, modifier = Modifier.size(12.dp))
+                                    Text(exif.cameraModel!!, color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            exif.aperture?.let { InnerMetricCard(tag = "Aperture", value = it, modifier = Modifier.weight(1f), centerAlign = true) }
+                            exif.shutter?.let { InnerMetricCard(tag = "Shutter", value = it, modifier = Modifier.weight(1f), centerAlign = true) }
+                            exif.iso?.let { InnerMetricCard(tag = "ISO", value = it, modifier = Modifier.weight(1f), centerAlign = true) }
+                            exif.focalLength?.let { InnerMetricCard(tag = "Focal", value = it, modifier = Modifier.weight(1f), centerAlign = true) }
+                        }
+                    }
+                }
+            }
+
+            // 5. Action Buttons Deck
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val dateInteractionSource = remember { MutableInteractionSource() }
+                val searchInteractionSource = remember { MutableInteractionSource() }
+                
+                // Adjust Date
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                        .pressScale(interactionSource = dateInteractionSource, pressedScale = 0.94f)
+                        .background(accentColor.copy(alpha = 0.14f), RoundedCornerShape(19.dp))
+                        .border(1.dp, accentColor.copy(alpha = 0.35f), RoundedCornerShape(19.dp))
+                        .clip(RoundedCornerShape(19.dp))
+                        .clickable(interactionSource = dateInteractionSource, indication = null) { onEditMetadata() }
+                ) {
+                    Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = accentColor, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Adjust Date", color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                // Search Image
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                        .pressScale(interactionSource = searchInteractionSource, pressedScale = 0.94f)
+                        .background((if (com.gorilla.gallery.ui.theme.LocalAppColors.current.isDark) Color.White else Color.Black).copy(alpha = 0.06f), RoundedCornerShape(19.dp))
+                        .border(1.dp, if (com.gorilla.gallery.ui.theme.LocalAppColors.current.isDark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.08f), RoundedCornerShape(19.dp))
+                        .clip(RoundedCornerShape(19.dp))
+                        .clickable(interactionSource = searchInteractionSource, indication = null) {
+                            onDismiss()
+                            
+                            val launchLens = { shareUri: android.net.Uri ->
+                                android.util.Log.d("LensDebug", "Launching Lens with URI: $shareUri")
+                                val lensIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "image/*"
+                                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    setClassName(
+                                        "com.google.android.googlequicksearchbox",
+                                        "com.google.android.apps.search.lens.LensShareEntryPointActivity"
+                                    )
+                                }
+                                try {
+                                    context.startActivity(lensIntent)
+                                    android.util.Log.d("LensDebug", "Primary Lens activity started.")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("LensDebug", "Primary Lens intent failed", e)
+                                    val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "image/*"
+                                        putExtra(Intent.EXTRA_STREAM, shareUri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        setPackage("com.google.android.googlequicksearchbox")
+                                    }
+                                    try {
+                                        context.startActivity(fallbackIntent)
+                                        android.util.Log.d("LensDebug", "Fallback Lens activity started.")
+                                    } catch (e2: Exception) {
+                                        android.util.Log.e("LensDebug", "Fallback Lens intent failed", e2)
+                                    }
+                                }
+                            }
+
+                            if (item.isVideo) {
+                                android.util.Log.d("LensDebug", "Item is video, extracting frame...")
+                                app.viewModelScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val frame = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                            app.videoTextureViews[item.id]?.bitmap
+                                        }
+                                        
+                                        if (frame != null) {
+                                            android.util.Log.d("LensDebug", "Frame extracted successfully: ${frame.width}x${frame.height}")
+                                            context.cacheDir.listFiles { _, name -> name.startsWith("lens_video_thumb") }?.forEach { it.delete() }
+                                            val cacheFile = java.io.File(context.cacheDir, "lens_video_thumb_${System.currentTimeMillis()}.jpg")
+                                            cacheFile.outputStream().use { out ->
+                                                frame.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                                            }
+                                            val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                cacheFile
+                                            )
+                                            withContext(Dispatchers.Main) {
+                                                launchLens(contentUri)
+                                            }
+                                        } else {
+                                            android.util.Log.e("LensDebug", "Extracted frame is NULL!")
+                                        }
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("LensDebug", "Exception extracting frame", e)
+                                    }
+                                }
+                            } else if (item.isSvg) {
+                                android.util.Log.d("LensDebug", "Item is SVG, rendering to bitmap...")
+                                app.viewModelScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val stream = runCatching { context.contentResolver.openInputStream(item.uri) }.getOrNull()
+                                            ?: if (item.absolutePath.isNotEmpty() && java.io.File(item.absolutePath).exists()) {
+                                                runCatching { java.io.FileInputStream(item.absolutePath) }.getOrNull()
+                                            } else null
+
+                                        val bitmap = stream?.use { s ->
+                                            val svg = com.caverock.androidsvg.SVG.getFromInputStream(s)
+                                            val docW = svg.documentWidth
+                                            val docH = svg.documentHeight
+                                            val vb = svg.documentViewBox
+                                            val srcW = if (docW > 0) docW else vb?.width() ?: 1024f
+                                            val srcH = if (docH > 0) docH else vb?.height() ?: 1024f
+                                            val maxDim = maxOf(srcW, srcH).coerceAtLeast(1f)
+                                            val targetDim = 1440f
+                                            val scale = targetDim / maxDim
+                                            val dstW = (srcW * scale).toInt().coerceAtLeast(1)
+                                            val dstH = (srcH * scale).toInt().coerceAtLeast(1)
+
+                                            if (vb == null && docW > 0 && docH > 0) {
+                                                svg.setDocumentViewBox(0f, 0f, docW, docH)
+                                            }
+                                            svg.setDocumentWidth("100%")
+                                            svg.setDocumentHeight("100%")
+
+                                            val bmp = android.graphics.Bitmap.createBitmap(dstW, dstH, android.graphics.Bitmap.Config.ARGB_8888)
+                                            val canvas = android.graphics.Canvas(bmp)
+                                            canvas.drawColor(android.graphics.Color.WHITE)
+                                            svg.renderToCanvas(canvas)
+                                            bmp
+                                        } ?: app.container.thumbnailRepository.getAnyCached(item.id, item.dateModifiedSec)
+
+                                        if (bitmap != null) {
+                                            context.cacheDir.listFiles { _, name -> name.startsWith("lens_svg_thumb") }?.forEach { it.delete() }
+                                            val cacheFile = java.io.File(context.cacheDir, "lens_svg_thumb_${System.currentTimeMillis()}.jpg")
+                                            cacheFile.outputStream().use { out ->
+                                                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                                            }
+                                            val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                cacheFile
+                                            )
+                                            withContext(Dispatchers.Main) {
+                                                launchLens(contentUri)
+                                            }
+                                        } else {
+                                            android.util.Log.e("LensDebug", "Failed to render SVG bitmap")
+                                        }
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("LensDebug", "Exception rendering SVG for Lens", e)
+                                    }
+                                }
+                            } else {
+                                android.util.Log.d("LensDebug", "Item is photo, launching directly...")
+                                launchLens(item.uri)
+                            }
+                        }
+                ) {
+                    Icon(Icons.Rounded.LensBlur, contentDescription = null, tint = textColorPrimary.copy(alpha = 0.85f), modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Search Image", color = textColorPrimary.copy(alpha = 0.85f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun InnerMetricCard(tag: String, value: String, modifier: Modifier = Modifier, centerAlign: Boolean = false) {
+    Box(
+        modifier = modifier
+            .background((if (com.gorilla.gallery.ui.theme.LocalAppColors.current.isDark) Color.White else Color.Black).copy(alpha = 0.035f), RoundedCornerShape(14.dp))
+            .border(1.dp, if (com.gorilla.gallery.ui.theme.LocalAppColors.current.isDark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = if (centerAlign) 3.dp else 9.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = if (centerAlign) Alignment.CenterHorizontally else Alignment.Start
+        ) {
+            Text(
+                text = tag.uppercase(),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LocalAppColors.current.textSecondary.copy(alpha = 0.7f),
+                letterSpacing = 0.4.sp
+            )
+            Text(
+                text = value,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = LocalAppColors.current.textPrimary,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+    }
+}
+
+
+private fun consolidateLabels(labels: List<String>): List<String> {
+    val results = mutableSetOf<String>()
+    
+    // Convert to a set of words for fast and exact matching, splitting by space just in case a label is multiple words
+    val words = labels.flatMap { it.lowercase().split(Regex("\\s+")) }.toSet()
+
+    // Helper to check if any word in the given list is present
+    fun hasAny(vararg terms: String): Boolean = terms.any { words.contains(it) }
+
+    // Pets & Animals
+    if (hasAny("cat", "kitten", "feline")) results.add("Cat")
+    else if (hasAny("dog", "puppy", "canine")) results.add("Dog")
+    else if (hasAny("bird", "parrot", "avian")) results.add("Bird")
+    else if (hasAny("horse", "equine")) results.add("Horse")
+    else if (hasAny("pet", "animal", "wildlife", "mammal", "reptile", "insect", "bug")) results.add("Animal")
+
+    // People
+    if (hasAny("person", "man", "woman", "boy", "girl", "face", "skin", "hair", "smile", "selfie", "portrait", "human", "people")) {
+        results.add("Person")
+    }
+
+    // Food
+    if (hasAny("food", "meal", "dessert", "fruit", "vegetable", "drink", "snack", "dish", "cuisine", "meat", "beverage")) {
+        results.add("Food")
+    }
+
+    // Nature
+    if (hasAny("nature", "landscape", "mountain", "water", "ocean", "beach", "sky", "tree", "plant", "flower", "forest", "outdoor", "grass", "petal", "leaf")) {
+        results.add("Nature")
+    }
+
+    // Urban / Architecture
+    if (hasAny("building", "architecture", "city", "street", "house", "urban", "bridge", "road")) {
+        results.add("Architecture")
+    }
+
+    // Vehicles
+    if (hasAny("vehicle", "car", "truck", "motorcycle", "bicycle", "airplane", "boat", "transport", "train", "bus")) {
+        results.add("Vehicle")
+    }
+
+    // Electronics / Tech
+    if (hasAny("electronics", "computer", "phone", "screen", "gadget", "device", "technology", "laptop", "tv")) {
+        results.add("Electronics")
+    }
+    
+    // Furniture / Indoor
+    if (hasAny("furniture", "room", "indoor", "chair", "table", "bed", "couch", "desk", "sofa")) {
+        results.add("Indoor")
+    }
+
+    if (results.isEmpty()) {
+        results.addAll(labels.take(2).map { it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase(java.util.Locale.getDefault()) else c.toString() } })
+    }
+
+    return results.toList()
+}
